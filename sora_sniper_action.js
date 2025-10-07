@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 // ---------------- CONFIG ----------------
-const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "YOUR_WEBHOOK_URL_HERE"; // replace or set as secret
+const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || "YOUR_WEBHOOK_URL_HERE";
 const SEEN_FILE = path.join(__dirname, 'seen.json');
 
 // keywords to detect Sora invites
@@ -11,15 +11,23 @@ const KEYWORDS = ['sora invite', 'sora 2 code', 'sora invite code', 'sora code',
 
 // ---------------- HELPERS ----------------
 function loadSeen() {
+  if (!fs.existsSync(SEEN_FILE)) {
+    fs.writeFileSync(SEEN_FILE, JSON.stringify({ posts: [], codes: [] }));
+  }
   try {
     return JSON.parse(fs.readFileSync(SEEN_FILE));
   } catch (e) {
+    console.warn('Failed reading seen.json, starting fresh');
     return { posts: [], codes: [] };
   }
 }
 
 function saveSeen(seen) {
-  fs.writeFileSync(SEEN_FILE, JSON.stringify(seen, null, 2));
+  try {
+    fs.writeFileSync(SEEN_FILE, JSON.stringify(seen, null, 2));
+  } catch (e) {
+    console.warn('Failed writing seen.json:', e.message);
+  }
 }
 
 async function sendDiscord(message) {
@@ -31,7 +39,6 @@ async function sendDiscord(message) {
 }
 
 function extractCodes(text) {
-  // find all alphanumeric sequences 5-8 chars long
   const regex = /\b[A-Z0-9]{5,8}\b/gi;
   const codes = [];
   let match;
@@ -43,8 +50,7 @@ function extractCodes(text) {
 }
 
 // ---------------- SCRAPER ----------------
-async function scrapeExample() {
-  // Example: simple Reddit JSON scraping
+async function scrapeReddit() {
   const urls = [
     'https://www.reddit.com/r/SoraAi/new.json?limit=10',
     'https://www.reddit.com/r/OpenAI/new.json?limit=10'
@@ -65,6 +71,7 @@ async function scrapeExample() {
 
         const text = `${post.data.title}\n${post.data.selftext || ''}`;
         const hasKeyword = KEYWORDS.some(k => text.toLowerCase().includes(k.toLowerCase()));
+
         if (!hasKeyword) {
           seen.posts.push(id);
           continue;
@@ -89,13 +96,17 @@ async function scrapeExample() {
   }
 
   saveSeen(seen);
-  await sendDiscord(`✅ Scan complete. Checked ${newPosts} new posts.`);
+  await sendDiscord(`✅ Scan complete. Checked ${newPosts} new posts. Total codes found: ${seen.codes.length}`);
 }
 
 // ---------------- RUN ----------------
-scrapeExample().then(() => {
-  process.exit(0);
-}).catch(err => {
-  console.error('Fatal error:', err);
-  process.exit(1);
-});
+(async () => {
+  try {
+    await scrapeReddit();
+    process.exit(0); // success
+  } catch (err) {
+    console.error('Fatal error in scraper:', err);
+    await sendDiscord(`❌ Sora sniper fatal error: ${err.message}`);
+    process.exit(1); // exit code 1 only if truly fatal
+  }
+})();
