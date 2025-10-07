@@ -13,25 +13,30 @@ jobs:
   run-sniper:
     runs-on: ubuntu-latest
     steps:
+      # 1️⃣ Checkout repo
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           persist-credentials: true
 
+      # 2️⃣ Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
+      # 3️⃣ Install dependencies (fixed: use npm install)
       - name: Install deps
-        run: npm ci
+        run: npm install
 
+      # 4️⃣ Run sniper script
       - name: Run sniper script
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           SUBREDDITS: OpenAI,ChatGPT,SoraAi
         run: node sora_sniper_action.js
 
+      # 5️⃣ Commit seen.json if changed
       - name: Commit seen.json if changed
         run: |
           git config user.name "github-actions[bot]"
