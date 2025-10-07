@@ -3,7 +3,7 @@ name: Sora Sniper
 on:
   schedule:
     - cron: "*/1 * * * *"  # every minute
-  workflow_dispatch:
+  workflow_dispatch: {}    # <-- must be an empty map, not a bare key
 
 jobs:
   run-sniper:
@@ -22,4 +22,3 @@ jobs:
 
       - name: Run script
         run: node sora-sniper.js
-
