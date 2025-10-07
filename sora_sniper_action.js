@@ -53,7 +53,7 @@ async function sendDiscordEmbed(title, description, fields=[]) {
         {
           title,
           description,
-          color: 0x00ff99, // greenish alpha color
+          color: 0x00ff99, // alpha green
           fields,
           timestamp: new Date().toISOString(),
         },
@@ -116,41 +116,31 @@ async function checkReddit(seen) {
 (async () => {
   try {
     const seen = loadSeen();
-
-    // 🔥 Run Reddit check
     const { hits, totalPostsChecked } = await checkReddit(seen);
 
-    // 🔥 Send a “working” embed with post count
-    await sendDiscordEmbed(
-      "Sora Sniper Status",
-      `Hello I am working ⚡ Skibidi, veiny ahh dih, alpha rizz active!\nTotal posts checked: ${totalPostsChecked}`,
-      []
-    );
+    // Collect all new codes for summary
+    const newCodeEntries = hits.flatMap(h => (h.codes||[]).filter(c => !seen.codes.includes(c))
+      .map(c => ({ subreddit: h.subreddit, title: h.title, code: c, link: h.link })));
+    
+    // Update seen codes
+    newCodeEntries.forEach(e => seen.codes.push(e.code));
 
-    console.log(`Loaded seen: ${seen.posts.length} posts, ${seen.codes.length} codes`);
+    // Prepare fields for embed summary
+    const fields = newCodeEntries.map(e => ({
+      name: `Subreddit: ${e.subreddit}`,
+      value: `Post: ${e.title}\nCode: ${e.code}\n[Link](${e.link})`,
+    }));
 
-    let anySent = false;
-
-    for (const h of hits) {
-      const newCodes = (h.codes||[]).filter(c => !seen.codes.includes(c));
-      if (newCodes.length === 0) continue;
-      const fields = [
-        { name: "Subreddit", value: h.subreddit, inline: true },
-        { name: "Post Title", value: h.title || "N/A", inline: true },
-        { name: "Codes", value: newCodes.join(', ') }
-      ];
-      await sendDiscordEmbed("New Sora Code Detected!", `Source: ${h.link}`, fields);
-      for (const c of newCodes) seen.codes.push(c);
-      anySent = true;
-    }
+    // Send “working” embed with summary
+    const summaryDescription = `Hello I am working ⚡ Skibidi, veiny ahh dih, alpha rizz active!\nTotal posts checked: ${totalPostsChecked}\nNew codes found: ${newCodeEntries.length}`;
+    await sendDiscordEmbed("Sora Sniper Status", summaryDescription, fields);
 
     saveSeen(seen);
-    console.log(`Saved seen.json. Any webhook sent? ${anySent}`);
+    console.log(`Saved seen.json. Total new codes sent: ${newCodeEntries.length}`);
   } catch(err) {
     console.error('Fatal error caught:', err);
   } finally {
     console.log('Script finished, exiting safely with code 0');
-    process.exit(0); // never exit with 1
+    process.exit(0);
   }
 })();
-
