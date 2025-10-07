@@ -1,10 +1,10 @@
 name: Sora Sniper
 
-# Schedule: every 5 minutes
+# Schedule: every minute
 on:
   schedule:
-    - cron: '*/5 * * * *'
-  workflow_dispatch: {}
+    - cron: '* * * * *'  # runs every minute
+  workflow_dispatch: {}  # still allows manual trigger
 
 permissions:
   contents: write
@@ -25,7 +25,7 @@ jobs:
         with:
           node-version: '20'
 
-      # 3️⃣ Install dependencies (fixed: use npm install)
+      # 3️⃣ Install dependencies
       - name: Install deps
         run: npm install
 
@@ -44,4 +44,3 @@ jobs:
           git add seen.json || true
           git commit -m "chore: update seen.json from action" || echo "No changes to commit"
           git push || echo "Push failed (maybe no changes)"
-
