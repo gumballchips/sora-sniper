@@ -1,12 +1,9 @@
-name: Internet Sora Sniper
+name: Sora Sniper
 
 on:
   schedule:
-    - cron: '* * * * *'   # every minute (be careful with frequency & rate limits)
-  workflow_dispatch: {}
-
-permissions:
-  contents: write
+    - cron: "*/1 * * * *"  # every minute
+  workflow_dispatch:
 
 jobs:
   run-sniper:
@@ -14,40 +11,15 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-        with:
-          persist-credentials: true
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Install node deps
-        run: npm install
+      - name: Install dependencies
+        run: npm install axios cheerio
 
-      - name: Optional: Install snscrape (if USE_SNSCRAPE secret true)
-        if: env.USE_SNSCRAPE == 'true'
-        run: |
-          python3 -m pip install --upgrade pip
-          pip install snscrape
+      - name: Run script
+        run: node sora-sniper.js
 
-      - name: Run internet sniper
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          USE_SNSCRAPE: ${{ secrets.USE_SNSCRAPE }}        # set 'true' to enable snscrape step
-          BING_API_KEY: ${{ secrets.BING_API_KEY }}
-          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
-          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
-          REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
-          REDDIT_PASSWORD: ${{ secrets.REDDIT_PASSWORD }}
-          RSS_FEEDS: ${{ secrets.RSS_FEEDS }}              # optional: comma-separated RSS feed URLs
-          MASTODON_INSTANCES: ${{ secrets.MASTODON_INSTANCES }}
-        run: node internet_sniper_action.js
-
-      - name: Commit seen.json if changed
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add seen.json || true
-          git commit -m "chore: update seen.json from action" || echo "No changes to commit"
-          git push || echo "Push failed (maybe no changes)"
