@@ -1,7 +1,3 @@
-// sora_sniper_action.js
-// Single-run Sora invite code scanner for GitHub Actions
-// Robust + “I am working” Discord ping
-
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
@@ -49,13 +45,24 @@ function saveSeen(seen) {
   }
 }
 
-// -------------------- Discord webhook sender --------------------
-async function sendDiscord(content) {
+// -------------------- Discord webhook embed sender --------------------
+async function sendDiscordEmbed(title, description, fields=[]) {
   try {
-    await axios.post(WEBHOOK_URL, { content }, { timeout: 15000 });
-    console.log('Webhook sent:', content.slice(0,50)+'...');
+    const payload = {
+      embeds: [
+        {
+          title,
+          description,
+          color: 0x00ff99, // greenish alpha color
+          fields,
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    };
+    await axios.post(WEBHOOK_URL, payload, { timeout: 15000 });
+    console.log('Embed sent:', title);
   } catch (err) {
-    console.warn('Failed to send webhook:', err.message);
+    console.warn('Failed to send embed:', err.message);
   }
 }
 
@@ -74,6 +81,7 @@ function extractCodes(text) {
 
 // -------------------- Reddit checker --------------------
 async function checkReddit(seen) {
+  let totalPostsChecked = 0;
   const hits = [];
   for (const sub of SUBREDDITS) {
     const url = `https://www.reddit.com/r/${sub}/new.json?limit=40`;
@@ -84,6 +92,7 @@ async function checkReddit(seen) {
         console.warn(`Unexpected JSON for r/${sub}`);
         continue;
       }
+      totalPostsChecked += children.length;
       for (const ch of children) {
         const p = ch.data;
         const postId = p.name || p.id;
@@ -100,26 +109,37 @@ async function checkReddit(seen) {
       console.warn(`Reddit fetch failed for r/${sub}:`, err.message);
     }
   }
-  return hits;
+  return { hits, totalPostsChecked };
 }
 
 // -------------------- Main runner --------------------
 (async () => {
   try {
-    // 🔥 Send a “working” ping immediately
-    await sendDiscord("Hello I am working ⚡ Skibidi, veiny ahh dih, alpha rizz active!");
-
     const seen = loadSeen();
+
+    // 🔥 Run Reddit check
+    const { hits, totalPostsChecked } = await checkReddit(seen);
+
+    // 🔥 Send a “working” embed with post count
+    await sendDiscordEmbed(
+      "Sora Sniper Status",
+      `Hello I am working ⚡ Skibidi, veiny ahh dih, alpha rizz active!\nTotal posts checked: ${totalPostsChecked}`,
+      []
+    );
+
     console.log(`Loaded seen: ${seen.posts.length} posts, ${seen.codes.length} codes`);
-    
-    const hits = await checkReddit(seen);
+
     let anySent = false;
 
     for (const h of hits) {
       const newCodes = (h.codes||[]).filter(c => !seen.codes.includes(c));
       if (newCodes.length === 0) continue;
-      const content = `**New possible Sora invite code(s)** from **${h.source}**\nSource: ${h.link}\nTitle: ${h.title}\nCodes: ${newCodes.join(', ')}`;
-      await sendDiscord(content);
+      const fields = [
+        { name: "Subreddit", value: h.subreddit, inline: true },
+        { name: "Post Title", value: h.title || "N/A", inline: true },
+        { name: "Codes", value: newCodes.join(', ') }
+      ];
+      await sendDiscordEmbed("New Sora Code Detected!", `Source: ${h.link}`, fields);
       for (const c of newCodes) seen.codes.push(c);
       anySent = true;
     }
