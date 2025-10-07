@@ -63,10 +63,13 @@ async function fetchSubreddit(sub) {
   let attempt = 0;
   while (attempt <= MAX_RETRIES) {
     try {
-      const url = `https://www.reddit.com/r/${sub}/new.json?limit=40`;
+      const url = `https://www.reddit.com/r/${sub}/new/.json?raw_json=1&limit=40`;
       const res = await axios.get(url, { headers: HEADERS, timeout:10000 });
       const children = res.data?.data?.children;
-      if (!Array.isArray(children)) throw new Error('No posts returned');
+      if (!Array.isArray(children)) {
+        console.warn(`r/${sub} returned unexpected JSON:`, JSON.stringify(res.data).slice(0, 300));
+        throw new Error('No children array');
+      }
       console.log(`r/${sub} fetched ${children.length} posts`);
       return children;
     } catch(err) {
@@ -119,7 +122,7 @@ async function checkReddit(seen) {
       value: `Post: ${e.title}\nCode: ${e.code}\n[Link](${e.link})`,
     }));
 
-    const summaryDescription = `Hello I am working ⚡ active!\nTotal posts checked: ${totalPostsChecked}\nNew codes found: ${newCodeEntries.length}`;
+    const summaryDescription = `Hello I am working ⚡ Skibidi, veiny ahh dih, alpha rizz active!\nTotal posts checked: ${totalPostsChecked}\nNew codes found: ${newCodeEntries.length}`;
     await sendDiscordEmbed("Sora Sniper Status", summaryDescription, fields);
 
     saveSeen(seen);
@@ -131,4 +134,3 @@ async function checkReddit(seen) {
     process.exit(0);
   }
 })();
-
