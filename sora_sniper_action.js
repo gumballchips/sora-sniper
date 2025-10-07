@@ -1,6 +1,6 @@
 // sora_sniper_action.js
 // Single-run Sora invite code scanner for GitHub Actions
-// Robust version: never exits with code 1, logs everything, safe seen.json handling
+// Robust + “I am working” Discord ping
 
 const fs = require('fs');
 const path = require('path');
@@ -8,6 +8,15 @@ const axios = require('axios');
 
 console.log('Starting Sora sniper single-run');
 
+// -------------------- Catch all uncaught errors --------------------
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('UNHANDLED REJECTION at:', promise, 'reason:', reason);
+});
+
+// -------------------- Config --------------------
 const WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
 if (!WEBHOOK_URL) {
   console.warn("DISCORD_WEBHOOK_URL not set. Exiting gracefully.");
@@ -97,6 +106,9 @@ async function checkReddit(seen) {
 // -------------------- Main runner --------------------
 (async () => {
   try {
+    // 🔥 Send a “working” ping immediately
+    await sendDiscord("Hello I am working ⚡ Skibidi, veiny ahh dih, alpha rizz active!");
+
     const seen = loadSeen();
     console.log(`Loaded seen: ${seen.posts.length} posts, ${seen.codes.length} codes`);
     
@@ -121,3 +133,4 @@ async function checkReddit(seen) {
     process.exit(0); // never exit with 1
   }
 })();
+
