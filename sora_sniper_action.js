@@ -76,8 +76,6 @@ async function sendDiscordEmbed(title, description, fields=[]) {
     console.warn('Failed to send embed:', err.message);
   }
 }
-
-// small retry wrapper
 async function withRetries(fn, label, max=MAX_RETRIES) {
   let attempt = 0;
   while (attempt <= max) {
@@ -95,7 +93,6 @@ async function withRetries(fn, label, max=MAX_RETRIES) {
 // ---------- Source: Reddit (preferred: snoowrap OAuth) ----------
 async function fetchRedditItems(limitPerSub=40, subreddits=['OpenAI','ChatGPT','SoraAi']) {
   const results = [];
-  // if snoowrap configured, use it
   let rClient = null;
   if (snoowrap && REDDIT_CLIENT_ID && REDDIT_CLIENT_SECRET && REDDIT_USERNAME && REDDIT_PASSWORD) {
     try {
@@ -111,7 +108,6 @@ async function fetchRedditItems(limitPerSub=40, subreddits=['OpenAI','ChatGPT','
 
   for (const sub of subreddits) {
     if (rClient) {
-      // authenticated fetch
       try {
         const posts = await rClient.getSubreddit(sub).getNew({ limit: limitPerSub });
         posts.forEach(p => {
@@ -127,7 +123,6 @@ async function fetchRedditItems(limitPerSub=40, subreddits=['OpenAI','ChatGPT','
         console.log(`Reddit (oauth) r/${sub} fetched ${posts.length}`);
       } catch(e){ console.warn(`Reddit oauth r/${sub} failed:`, e.message); }
     } else {
-      // fallback: public JSON with raw_json=1
       const children = await withRetries(async () => {
         const url = `https://www.reddit.com/r/${sub}/new/.json?raw_json=1&limit=${limitPerSub}`;
         const res = await axios.get(url, { headers: HEADERS, timeout: 10000 });
@@ -156,7 +151,6 @@ async function fetchRedditItems(limitPerSub=40, subreddits=['OpenAI','ChatGPT','
 async function fetchTwitterSnscrape(keywords = KEYWORDS, maxResults = 50) {
   if (!USE_SNSCRAPE) return [];
   try {
-    // build query -- quotes to keep phrases
     const query = keywords.map(k => `"${k}"`).join(' OR ') + ' lang:en';
     const cmd = `snscrape --jsonl --max-results=${maxResults} twitter-search "${query}"`;
     console.log('Running snscrape for twitter...');
@@ -324,12 +318,6 @@ async function fetchMastodon(hashtagList = [], instances = MASTODON_INSTANCES) {
   } catch (err) {
     console.error('Fatal error:', err);
   } finally {
-    process.exit(0);
-  }
-})();
-
-  } finally {
-    console.log('Script finished, exiting safely with code 0');
     process.exit(0);
   }
 })();
