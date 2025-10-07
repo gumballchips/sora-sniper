@@ -1,10 +1,9 @@
-name: Sora Sniper
+name: Internet Sora Sniper
 
-# Schedule: every minute
 on:
   schedule:
-    - cron: '* * * * *'  # runs every minute
-  workflow_dispatch: {}  # still allows manual trigger
+    - cron: '* * * * *'   # every minute (be careful with frequency & rate limits)
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -13,30 +12,38 @@ jobs:
   run-sniper:
     runs-on: ubuntu-latest
     steps:
-      # 1️⃣ Checkout repo
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           persist-credentials: true
 
-      # 2️⃣ Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      # 3️⃣ Install dependencies
-      - name: Install deps
+      - name: Install node deps
         run: npm install
 
-      # 4️⃣ Run sniper script
-      - name: Run sniper script
+      - name: Optional: Install snscrape (if USE_SNSCRAPE secret true)
+        if: env.USE_SNSCRAPE == 'true'
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install snscrape
+
+      - name: Run internet sniper
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          SUBREDDITS: OpenAI,ChatGPT,SoraAi
-        run: node sora_sniper_action.js
+          USE_SNSCRAPE: ${{ secrets.USE_SNSCRAPE }}        # set 'true' to enable snscrape step
+          BING_API_KEY: ${{ secrets.BING_API_KEY }}
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
+          REDDIT_PASSWORD: ${{ secrets.REDDIT_PASSWORD }}
+          RSS_FEEDS: ${{ secrets.RSS_FEEDS }}              # optional: comma-separated RSS feed URLs
+          MASTODON_INSTANCES: ${{ secrets.MASTODON_INSTANCES }}
+        run: node internet_sniper_action.js
 
-      # 5️⃣ Commit seen.json if changed
       - name: Commit seen.json if changed
         run: |
           git config user.name "github-actions[bot]"
