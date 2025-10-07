@@ -1,0 +1,45 @@
+name: Sora Sniper
+
+# runs every 5 minutes; adjust cron as needed
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # allow committing updated seen.json
+  id-token: write
+  actions: read
+
+jobs:
+  run-sniper:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install deps
+        run: npm ci
+        # ensure package.json exists with axios dependency; otherwise install minimal:
+        # run: npm install axios
+
+      - name: Run sniper script
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          SUBREDDITS: OpenAI,ChatGPT,SoraAi
+        run: node sora_sniper_action.js
+
+      - name: Commit seen.json if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add seen.json || true
+          git commit -m "chore: update seen.json from action" || echo "No changes to commit"
+          git push || echo "Push failed (maybe no changes)"
