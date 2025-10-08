@@ -1,25 +1,6 @@
-/**
- * internet_sniper_action.js
- *
- * Single-run aggregator that:
- *  - Queries Reddit (snoowrap if OAuth provided, otherwise public JSON fallback)
- *  - Optionally runs snscrape for Twitter/X (if USE_SNSCRAPE env = 'true' and runner has snscrape)
- *  - Optionally queries Bing News Search API (if BING_API_KEY provided)
- *  - Reads any RSS feeds you list (RSS_FEEDS env)
- *  - Optionally queries Mastodon instances (MASTODON_INSTANCES env and hashtags)
- *  - Crawls (1-depth) links returned from Bing / RSS to scan page text using cheerio
- *  - Extracts candidate codes with regex (5–8 alphanumeric) and filters
- *  - Deduplicates using seen.json and posts a single embed to Discord
- *
- * Env / Secrets:
- *  - DISCORD_WEBHOOK_URL (required)
- *  - USE_SNSCRAPE = 'true' to enable snscrape block (workflow must pip install snscrape)
- *  - BING_API_KEY (optional; recommended for broad search results)
- *  - REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, REDDIT_USERNAME, REDDIT_PASSWORD (optional, recommended)
- *  - RSS_FEEDS (optional) - comma-separated URLs
- *  - MASTODON_INSTANCES (optional) - comma-separated instance hostnames
- *  - SUBREDDITS (optional) - comma-separated subreddits to include as fallback, default: OpenAI,ChatGPT,SoraAi
- */
+// internet_sniper_action_debug.js
+// Verbose debug variant: logs per-source counts and small snippets when a source returns unexpected content.
+// Replace your existing internet_sniper_action.js with this for a single-run debug.
 
 const fs = require('fs');
 const path = require('path');
@@ -27,7 +8,7 @@ const axios = require('axios');
 const RSSParser = require('rss-parser');
 const { execSync } = require('child_process');
 let snoowrap = null;
-try { snoowrap = require('snoowrap'); } catch (_) { /* snoowrap optional */ }
+try { snoowrap = require('snoowrap'); } catch (_) {}
 const cheerio = require('cheerio');
 
 const SEEN_PATH = path.join(process.cwd(), 'seen.json');
@@ -50,20 +31,17 @@ const REDDIT_CLIENT_SECRET = process.env.REDDIT_CLIENT_SECRET || null;
 const REDDIT_USERNAME = process.env.REDDIT_USERNAME || null;
 const REDDIT_PASSWORD = process.env.REDDIT_PASSWORD || null;
 
-const HEADERS = { 'User-Agent': 'Mozilla/5.0 (compatible; SoraSniper/1.0)' };
+const HEADERS = { 'User-Agent': 'Mozilla/5.0 (compatible; SoraSniperDebug/1.0)' };
 
-// pattern for candidate codes: 5-8 alphanumeric (adjust if Sora uses different format)
 const CODE_REGEX = /\b([A-Z0-9]{5,8})\b/gi;
-// keywords to decide if a page/post is likely about Sora invites
 const KEYWORDS = ['sora invite','sora 2 code','sora invite code','sora code','sora2 invite'];
 const POST_DETECT = new RegExp(KEYWORDS.map(k => k.replace(/[-/\\^$*+?.()|[\]{}]/g,'\\$&')).join('|'), 'i');
 
 const MAX_RETRIES = 2;
 const RETRY_DELAY_MS = 2000;
-const MAX_CRAWL_LINKS = 20;   // max number of links to crawl from search results
-const MAX_FIELDS_IN_EMBED = 12; // limit embed size
+const MAX_CRAWL_LINKS = 20;
+const MAX_FIELDS_IN_EMBED = 12;
 
-// ----------------- seen.json helpers -----------------
 function loadSeen() {
   try {
     if (!fs.existsSync(SEEN_PATH)) {
@@ -79,16 +57,10 @@ function saveSeen(seen) {
   try { fs.writeFileSync(SEEN_PATH, JSON.stringify(seen, null, 2)); }
   catch (e) { console.warn("Failed saving seen.json:", e.message); }
 }
-
-// ----------------- Discord embed helper -----------------
 async function sendDiscordEmbed(title, description, fields=[]) {
   const payload = {
     embeds: [{
-      title: title,
-      description: description,
-      color: 0x00ff99,
-      fields: fields,
-      timestamp: new Date().toISOString()
+      title, description, color: 0x00ff99, fields, timestamp: new Date().toISOString()
     }]
   };
   try {
@@ -97,21 +69,6 @@ async function sendDiscordEmbed(title, description, fields=[]) {
   } catch (e) {
     console.warn("Failed to post embed:", e.message);
   }
-}
-
-// ----------------- small helpers -----------------
-async function withRetries(fn, label, max=MAX_RETRIES) {
-  let attempt = 0;
-  while (attempt <= max) {
-    try { return await fn(); }
-    catch (err) {
-      attempt++;
-      console.warn(`${label} attempt ${attempt} failed: ${err.message || err}`);
-      if (attempt > max) return null;
-      await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
-    }
-  }
-  return null;
 }
 function extractCodes(text) {
   const found = new Set();
@@ -128,61 +85,76 @@ function looksRelevant(text) {
   if (!text) return false;
   return POST_DETECT.test(text);
 }
+async function withRetries(fn, label, max=MAX_RETRIES) {
+  let attempt = 0;
+  while (attempt <= max) {
+    try { return await fn(); }
+    catch (err) {
+      attempt++;
+      console.warn(`${label} attempt ${attempt} failed: ${err.message || err}`);
+      if (attempt > max) return null;
+      await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+    }
+  }
+  return null;
+}
 
-// ----------------- Reddit fetch (snoowrap if OAuth creds provided) -----------------
+// ------------- sources with verbose debug -------------
 async function fetchReddit(limitPerSub = 40) {
   const results = [];
+  const debug = { source: 'reddit', details: [] };
   let rClient = null;
   if (snoowrap && REDDIT_CLIENT_ID && REDDIT_CLIENT_SECRET && REDDIT_USERNAME && REDDIT_PASSWORD) {
     try {
       rClient = new snoowrap({
-        userAgent: 'sora-sniper-bot/1.0 (by script)',
+        userAgent: 'sora-sniper-bot/1.0 (debug)',
         clientId: REDDIT_CLIENT_ID,
         clientSecret: REDDIT_CLIENT_SECRET,
         username: REDDIT_USERNAME,
         password: REDDIT_PASSWORD
       });
-    } catch (e) { console.warn("snoowrap init failed:", e.message); rClient = null; }
+      debug.oauth = true;
+    } catch (e) { debug.oauth = false; debug.oauth_error = String(e).slice(0,200); rClient = null; }
+  } else {
+    debug.oauth = false;
   }
 
   for (const sub of SUBREDDITS) {
     if (rClient) {
       try {
         const posts = await rClient.getSubreddit(sub).getNew({ limit: limitPerSub });
-        console.log(`Reddit(oauth) r/${sub} -> ${posts.length}`);
-        posts.forEach(p => results.push({
-          source: 'reddit', subreddit: sub, id: p.name || p.id, title: p.title || '', link: `https://reddit.com${p.permalink}`, text: `${p.title}\n\n${p.selftext||''}`
-        }));
+        debug.details.push({ sub, type: 'oauth', count: posts.length });
+        posts.forEach(p => results.push({ source:'reddit', subreddit: sub, id: p.name || p.id, title: p.title||'', link:`https://reddit.com${p.permalink}`, text: `${p.title}\n\n${p.selftext||''}` }));
       } catch (e) {
-        console.warn(`Reddit(oauth) r/${sub} failed:`, e.message);
+        debug.details.push({ sub, type: 'oauth_error', error: String(e).slice(0,300) });
       }
     } else {
-      // public JSON fallback (raw_json=1 helps)
       const children = await withRetries(async () => {
         const url = `https://www.reddit.com/r/${sub}/new/.json?raw_json=1&limit=${limitPerSub}`;
         const r = await axios.get(url, { headers: HEADERS, timeout: 10000 });
-        if (!r.data?.data?.children) throw new Error("no children");
+        if (!r.data?.data?.children) throw new Error('no children');
         return r.data.data.children;
       }, `reddit-${sub}`);
       if (Array.isArray(children)) {
-        console.log(`Reddit(public) r/${sub} -> ${children.length}`);
+        debug.details.push({ sub, type: 'public', count: children.length });
         children.forEach(ch => {
           const p = ch.data || {};
-          results.push({ source: 'reddit', subreddit: sub, id: p.name || p.id, title: p.title||'', link: `https://reddit.com${p.permalink||''}`, text: `${p.title||''}\n\n${p.selftext||''}` });
+          results.push({ source:'reddit', subreddit: sub, id: p.name || p.id, title: p.title||'', link:`https://reddit.com${p.permalink||''}`, text: `${p.title||''}\n\n${p.selftext||''}` });
         });
+      } else {
+        debug.details.push({ sub, type: 'public_error', snippet: 'no children or fetch failed' });
       }
     }
   }
-  return results;
+  return { items: results, debug };
 }
 
-// ----------------- Twitter via snscrape (optional) -----------------
 async function fetchTwitter(maxResults = 50) {
-  if (!USE_SNSCRAPE) return [];
+  const debug = { source: 'twitter', used: USE_SNSCRAPE, details: null };
+  if (!USE_SNSCRAPE) { debug.details = 'disabled'; return { items: [], debug }; }
   try {
     const query = KEYWORDS.map(k => `"${k}"`).join(' OR ') + ' lang:en';
     const cmd = `snscrape --jsonl --max-results=${maxResults} twitter-search "${query}"`;
-    console.log("Running snscrape...");
     const out = execSync(cmd, { encoding: 'utf8', stdio: ['pipe','pipe','pipe'] });
     const lines = out.split(/\r?\n/).filter(Boolean);
     const items = [];
@@ -191,162 +163,187 @@ async function fetchTwitter(maxResults = 50) {
         const obj = JSON.parse(line);
         const id = String(obj.id);
         const text = obj.content || '';
-        items.push({ source: 'twitter', id, title: text.slice(0,80), link: `https://twitter.com/i/web/status/${id}`, text });
-      } catch (e) { /* ignore */ }
+        items.push({ source:'twitter', id, title: text.slice(0,80), link:`https://twitter.com/i/web/status/${id}`, text });
+      } catch(e) {}
       if (items.length >= maxResults) break;
     }
-    console.log("snscrape returned", items.length);
-    return items;
+    debug.details = `snscrape returned ${items.length}`;
+    return { items, debug };
   } catch (e) {
-    console.warn("snscrape failed:", e.message);
-    return [];
+    debug.details = `snscrape failed: ${String(e).slice(0,300)}`;
+    return { items: [], debug };
   }
 }
 
-// ----------------- Bing News search (optional; needs API key) -----------------
 async function fetchBingNews(count = 25) {
-  if (!BING_API_KEY) return [];
+  const debug = { source: 'bing', configured: !!BING_API_KEY, details: null };
+  if (!BING_API_KEY) { debug.details = 'no_api_key'; return { items: [], debug }; }
   try {
     const query = KEYWORDS.join(' OR ');
     const url = `https://api.bing.microsoft.com/v7.0/news/search?q=${encodeURIComponent(query)}&count=${count}&mkt=en-US`;
     const res = await axios.get(url, { headers: { 'Ocp-Apim-Subscription-Key': BING_API_KEY }, timeout: 10000 });
-    const items = (res.data?.value || []).map(it => ({ source: 'bing-news', id: it.url, title: it.name || '', link: it.url, text: (it.description || '') + ' ' + (it.body || '') }));
-    console.log("Bing News:", items.length);
-    return items;
+    const items = (res.data?.value || []).map(it => ({ source:'bing-news', id: it.url, title: it.name||'', link: it.url, text:(it.description||'') }));
+    debug.details = `bing returned ${items.length}`;
+    return { items, debug };
   } catch (e) {
-    console.warn("Bing News failed:", e.message);
-    return [];
+    debug.details = `bing failed: ${String(e).slice(0,300)}`;
+    return { items: [], debug };
   }
 }
 
-// ----------------- RSS fetch -----------------
 async function fetchRSS(feeds = RSS_FEEDS) {
-  if (!feeds.length) return [];
+  const debug = { source: 'rss', feedsCount: feeds.length, details: [] };
+  if (!feeds.length) { debug.details = 'no_feeds'; return { items: [], debug }; }
   const out = [];
   for (const feed of feeds) {
     try {
       const parsed = await rssParser.parseURL(feed);
-      (parsed.items || []).slice(0,30).forEach(item => {
-        out.push({ source: 'rss', id: item.guid || item.link || item.pubDate || (item.title || ''), title: item.title || '', link: item.link || '', text: (item.contentSnippet || item.content || item.summary || item.description || '') });
-      });
-      console.log(`RSS ${feed} -> ${parsed.items?.length || 0}`);
+      const items = (parsed.items || []).slice(0,30).map(item => ({ source:'rss', id:item.guid||item.link||item.pubDate||item.title, title: item.title||'', link:item.link||'', text: (item.contentSnippet || item.content || item.summary || item.description || '') }));
+      out.push(...items);
+      debug.details.push({ feed, count: items.length });
     } catch (e) {
-      console.warn("RSS fetch failed for", feed, e.message);
+      debug.details.push({ feed, error: String(e).slice(0,300) });
     }
   }
-  return out;
+  return { items: out, debug };
 }
 
-// ----------------- Mastodon hashtag fetch (optional) -----------------
-async function fetchMastodon(hashtags = ['sora','sora2'], instances = MASTODON_INSTANCES) {
-  if (!instances.length || !hashtags.length) return [];
+async function fetchMastodon(hashtags=['sora','sora2'], instances = MASTODON_INSTANCES) {
+  const debug = { source: 'mastodon', instancesCount: instances.length, details: [] };
+  if (!instances.length) { debug.details = 'no_instances'; return { items: [], debug }; }
   const out = [];
   for (const inst of instances) {
     for (const tag of hashtags) {
       try {
         const url = `https://${inst}/api/v1/timelines/tag/${encodeURIComponent(tag)}?limit=40`;
         const res = await axios.get(url, { headers: HEADERS, timeout: 10000 });
-        (res.data || []).forEach(t => {
-          out.push({ source: 'mastodon', id: t.id, title: (t.account?.acct || '') + ': ' + (t.content ? t.content.replace(/<[^>]*>/g,'').slice(0,80) : ''), link: t.url || '', text: t.content ? t.content.replace(/<[^>]*>/g,'') : '' });
-        });
-        console.log(`Mastodon ${inst} #${tag} -> ${res.data?.length || 0}`);
+        (res.data || []).forEach(t => out.push({ source:'mastodon', id: t.id, title: (t.account?.acct||'') + ': ' + (t.content||'').replace(/<[^>]*>/g,'').slice(0,80), link: t.url||'', text: t.content?.replace(/<[^>]*>/g,'')||'' }));
+        debug.details.push({ inst, tag, count: res.data?.length || 0 });
       } catch (e) {
-        console.warn(`Mastodon ${inst} #${tag} failed:`, e.message);
+        debug.details.push({ inst, tag, error: String(e).slice(0,300) });
       }
     }
   }
-  return out;
+  return { items: out, debug };
 }
 
-// ----------------- Simple crawler (1-depth) - fetches text from URLs -----------------
 async function crawlLinks(urls = [], max = MAX_CRAWL_LINKS) {
+  const debug = { source: 'crawler', requested: urls.length, crawled: 0, details: [] };
   const results = [];
   const toCrawl = urls.slice(0, max);
   for (const u of toCrawl) {
     try {
       const r = await axios.get(u, { headers: HEADERS, timeout: 10000 });
       const $ = cheerio.load(r.data);
-      const text = $('body').text().replace(/\s+/g, ' ').trim().slice(0, 20000);
-      results.push({ source: 'web', id: u, title: $('title').first().text() || u, link: u, text });
-      console.log("Crawled", u);
+      const text = $('body').text().replace(/\s+/g,' ').trim().slice(0,20000);
+      results.push({ source:'web', id: u, title: $('title').first().text()||u, link:u, text });
+      debug.crawled++;
+      debug.details.push({ url: u, ok: true, snippet: text.slice(0,300) });
     } catch (e) {
-      console.warn("Crawl failed", u, e.message);
+      debug.details.push({ url: u, error: String(e).slice(0,300) });
     }
   }
-  return results;
+  debug.items = results.length;
+  return { items: results, debug };
 }
 
-// ----------------- Aggregation and run -----------------
 (async () => {
   const seen = loadSeen();
   const aggregated = [];
-  try {
-    // 1) Reddit
-    const redditItems = await fetchReddit(40);
-    aggregated.push(...redditItems);
+  const debugReport = [];
 
-    // 2) Twitter via snscrape (optional)
-    const twitterItems = await fetchTwitter(40);
-    aggregated.push(...twitterItems);
+  // REDDIT
+  const rRes = await fetchReddit(25);
+  aggregated.push(...(rRes.items || []));
+  debugReport.push(rRes.debug);
 
-    // 3) Bing News (optional)
-    const bingItems = await fetchBingNews(25);
-    aggregated.push(...bingItems);
+  // TWITTER
+  const tRes = await fetchTwitter(40);
+  aggregated.push(...(tRes.items || []));
+  debugReport.push(tRes.debug);
 
-    // 4) RSS
-    const rssItems = await fetchRSS();
-    aggregated.push(...rssItems);
+  // BING
+  const bRes = await fetchBingNews(25);
+  aggregated.push(...(bRes.items || []));
+  debugReport.push(bRes.debug);
 
-    // 5) Mastodon
-    const mastoItems = await fetchMastodon();
-    aggregated.push(...mastoItems);
+  // RSS
+  const rssRes = await fetchRSS();
+  aggregated.push(...(rssRes.items || []));
+  debugReport.push(rssRes.debug);
 
-    // 6) Crawl links discovered in Bing/RSS items to expand coverage
-    const candidateLinks = [
-      ...bingItems.map(i => i.link).filter(Boolean),
-      ...rssItems.map(i => i.link).filter(Boolean),
-      ...aggregated.map(i => i.link).filter(Boolean)
-    ];
-    // dedupe links
-    const uniqLinks = Array.from(new Set(candidateLinks)).slice(0, MAX_CRAWL_LINKS);
-    const crawled = await crawlLinks(uniqLinks, MAX_CRAWL_LINKS);
-    aggregated.push(...crawled);
+  // MASTODON
+  const mRes = await fetchMastodon();
+  aggregated.push(...(mRes.items || []));
+  debugReport.push(mRes.debug);
 
-    console.log("Total aggregated items:", aggregated.length);
+  // Crawl candidate links (bing+rss+aggregated links)
+  const candidateLinks = Array.from(new Set([
+    ...bRes.items?.map(i=>i.link||'').filter(Boolean),
+    ...rssRes.items?.map(i=>i.link||'').filter(Boolean),
+    ...aggregated.map(i=>i.link||'').filter(Boolean)
+  ])).slice(0, MAX_CRAWL_LINKS);
+  const cRes = await crawlLinks(candidateLinks, MAX_CRAWL_LINKS);
+  aggregated.push(...(cRes.items || []));
+  debugReport.push(cRes.debug);
 
-    // Extract codes and form new entries
-    const newEntries = [];
-    for (const item of aggregated) {
-      const id = item.id || (item.source + '|' + (item.link || item.title || Math.random()));
-      if (seen.posts.includes(id)) continue;
-      const text = `${item.title || ''}\n\n${item.text || ''}`;
-      if (!looksRelevant(text)) { seen.posts.push(id); continue; }
-      const codes = extractCodes(text);
-      if (codes.length) {
-        for (const c of codes) {
-          if (!seen.codes.includes(c)) {
-            newEntries.push({ source: item.source, id, title: item.title || '', link: item.link || '', code: c });
-            seen.codes.push(c);
-          }
+  console.log('AGGREGATED TOTAL:', aggregated.length);
+
+  // Extract codes and build new entries
+  const newEntries = [];
+  for (const item of aggregated) {
+    const id = item.id || (item.source + '|' + (item.link || item.title || Math.random()));
+    if (seen.posts.includes(id)) continue;
+    const text = `${item.title || ''}\n\n${item.text || ''}`;
+    if (!looksRelevant(text)) { seen.posts.push(id); continue; }
+    const codes = extractCodes(text);
+    if (codes.length) {
+      for (const c of codes) {
+        if (!seen.codes.includes(c)) {
+          newEntries.push({ source: item.source, id, title: item.title||'', link: item.link||'', code: c });
+          seen.codes.push(c);
         }
       }
-      seen.posts.push(id);
     }
-
-    // Build embed fields (cap on number)
-    const fields = newEntries.slice(0, MAX_FIELDS_IN_EMBED).map(e => ({
-      name: `${e.source}`,
-      value: `Title: ${e.title || 'N/A'}\nCode: ${e.code}\n${e.link ? `[link](${e.link})` : ''}`
-    }));
-
-    const description = `Hello I am working ⚡ Scanned ${aggregated.length} items across sources.\nNew codes found: ${newEntries.length}`;
-    await sendDiscordEmbed("Sora Sniper Status", description, fields);
-
-  } catch (err) {
-    console.error("Aggregator fatal error:", err);
-    try { await sendDiscordEmbed("Sora Sniper Error", `Fatal error: ${String(err).slice(0,200)}`, []); } catch (_) {}
-  } finally {
-    saveSeen(seen);
-    process.exit(0);
+    seen.posts.push(id);
   }
+
+  // Build debug-friendly embed fields: show per-source counts & small debug snippet for first failing sources
+  const perSourceCounts = {};
+  for (const d of debugReport) {
+    const s = d.source || 'unknown';
+    perSourceCounts[s] = perSourceCounts[s] || 0;
+    if (d.details && Array.isArray(d.details)) {
+      perSourceCounts[s] += d.details.reduce((acc, x) => acc + (x.count || 0), 0);
+    } else if (d.items) {
+      perSourceCounts[s] += (d.items.length || 0);
+    }
+  }
+
+  const debugFields = [];
+  for (const d of debugReport) {
+    const name = d.source || 'source';
+    let val = JSON.stringify(d.details || d, null, 0);
+    if (val.length > 800) val = val.slice(0, 760) + '...';
+    debugFields.push({ name: `${name} debug`, value: val });
+    if (debugFields.length >= 6) break;
+  }
+
+  const description = `Hello I am working ⚡ Scanned ${aggregated.length} aggregated items.\nNew codes: ${newEntries.length}\nPer-source overview: ${JSON.stringify(perSourceCounts)}`;
+  const embedFields = [];
+
+  // include top code entries
+  for (const e of newEntries.slice(0, MAX_FIELDS_IN_EMBED)) {
+    embedFields.push({ name: `${e.source}`, value: `Code: ${e.code}\nTitle: ${e.title || 'N/A'}\n${e.link ? `[link](${e.link})` : ''}` });
+  }
+  // append debug fields if no new codes (so you get reasons)
+  if (newEntries.length === 0) {
+    embedFields.push(...debugFields);
+  }
+
+  await sendDiscordEmbed("Sora Sniper Status (debug)", description, embedFields);
+
+  saveSeen(seen);
+  console.log('Saved seen.json; new entries:', newEntries.length);
+  process.exit(0);
 })();
