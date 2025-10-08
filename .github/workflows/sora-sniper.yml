@@ -3,37 +3,32 @@ name: Sora Sniper
 on:
   schedule:
     - cron: "*/1 * * * *"  # runs every minute
-  workflow_dispatch: {}    # manual trigger option
+  workflow_dispatch:       # allows manual trigger
 
 jobs:
   run-sniper:
     runs-on: ubuntu-latest
+
     steps:
-      # 1️⃣ checkout repo
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main  # change to your branch name if not "main"
 
-      # 2️⃣ setup Node.js
-      - name: Setup Node
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      # 3️⃣ install dependencies
       - name: Install dependencies
-        run: npm install axios cheerio
+        run: npm install
 
-      # 4️⃣ run Sora sniper script
+      - name: List files for debug
+        run: ls -R
+
       - name: Run Sora Sniper
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        working-directory: ${{ github.workspace }}
         run: node sora-sniper.js
-
-      # 5️⃣ commit seen.json if changed
-      - name: Commit seen.json
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add seen.json || true
-          git diff --cached --quiet || git commit -m "🤖 Bot: updated seen.json with latest Sora scans"
-          git push || echo "Push failed (probably no changes)"
