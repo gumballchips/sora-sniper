@@ -1,33 +1,53 @@
-name: Sora Sniper
+name: Internet Sora Sniper
 
 on:
   schedule:
-    - cron: "*/1 * * * *"  # runs every minute
-  workflow_dispatch:       # allows manual trigger
+    - cron: "*/1 * * * *"  # run every minute
+  workflow_dispatch:       # manual trigger allowed
 
 jobs:
   run-sniper:
     runs-on: ubuntu-latest
 
     steps:
+      # 1) Checkout the repo
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: main   # change if your branch is different
 
+      # 2) Setup Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
+      # 3) Install npm dependencies
       - name: Install dependencies
         run: npm install
 
-      - name: List files for debug
+      # 4) Optional: Install snscrape for Twitter/X scraping
+      - name: Optional: Install snscrape
+        if: env.USE_SNSCRAPE == 'true'
+        run: |
+          python3 -m pip install --upgrade pip
+          pip install snscrape
+
+      # 5) List files for debugging (optional)
+      - name: List repo files
         run: ls -R
 
-      - name: Run Sora Sniper
+      # 6) Run the Internet-wide Sora Sniper
+      - name: Run internet sniper
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: node sora_sniper_action.js
-
+          USE_SNSCRAPE: ${{ secrets.USE_SNSCRAPE }}       # 'true' to enable snscrape
+          BING_API_KEY: ${{ secrets.BING_API_KEY }}       # optional for broader search
+          REDDIT_CLIENT_ID: ${{ secrets.REDDIT_CLIENT_ID }}
+          REDDIT_CLIENT_SECRET: ${{ secrets.REDDIT_CLIENT_SECRET }}
+          REDDIT_USERNAME: ${{ secrets.REDDIT_USERNAME }}
+          REDDIT_PASSWORD: ${{ secrets.REDDIT_PASSWORD }}
+          RSS_FEEDS: ${{ secrets.RSS_FEEDS }}             # optional, comma-separated
+          MASTODON_INSTANCES: ${{ secrets.MASTODON_INSTANCES }} # optional, comma-separated
+        run: node internet_sniper_action.js
